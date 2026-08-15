@@ -1,0 +1,36 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="pandas" />
+          <option value="numpy" />
+          <option value="scikit-learn" />
+          <option value="ipykernel" />
+          <option value="matplotlib" />
+          <option value="asttokens" />
+          <option value="blinker" />
+          <option value="comm" />
+          <option value="contourpy" />
+          <option value="cycler" />
+          <option value="debugpy" />
+          <option value="decorator" />
+          <option value="executing" />
+          <option value="Flask" />
+          <option value="fonttools" />
+          <option value="ipython" />
+          <option value="ipython_pygments_lexers" />
+          <option value="itsdangerous" />
+          <option value="jedi" />
+          <option value="Jinja2" />
+          <option value="jupyter_client" />
+          <option value="jupyter_core" />
+          <option value="kiwisolver" />
+          <option value="MarkupSafe" />
+          <option value="matplotl" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>
