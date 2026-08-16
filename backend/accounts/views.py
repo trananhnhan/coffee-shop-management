@@ -7,7 +7,7 @@ from core.pagination import BasicPaginator
 from core.shared import ActivatableViewSetMixin
 
 from .models import Branch, User, Role
-from .permissions import IsOwner, IsOwnerOrStoreManager
+from .permissions import IsOwner, IsOwnerOrStoreManager, CanManageTargetUser
 from . import serializers
 
 
@@ -45,10 +45,17 @@ class BranchViewSet(ActivatableViewSetMixin, viewsets.ModelViewSet):
 
 class UserViewSet(ActivatableViewSetMixin, viewsets.ModelViewSet):
     # View này có nhiều role, nên phải chia case ở get_queryset
-    permission_classes = [IsOwnerOrStoreManager]
+
     http_method_names = ['get', 'post', 'patch']
 
     pagination_class = BasicPaginator
+    def get_permissions(self):
+        # Nếu là các thao tác tác động trực tiếp lên 1 user cụ thể
+        if self.action in ['partial_update', 'deactivate', 'activate']:
+            return [IsOwnerOrStoreManager(), CanManageTargetUser()]
+
+        # Các action còn lại (list, create, retrieve)
+        return [IsOwnerOrStoreManager()]
 
     def get_queryset(self):
         user = self.request.user
@@ -81,18 +88,6 @@ class UserViewSet(ActivatableViewSetMixin, viewsets.ModelViewSet):
             return serializers.PartialUpdateUserSerializer
         return serializers.RetrieveUserSerializer
 
-    @action(detail=True, methods=['patch'])
-    def deactivate(self, request, pk=None):
-        target_user = self.get_object()
-        current_user = request.user
-
-        if current_user.role == Role.STORE_MANAGER and target_user.role not in [Role.CASHIER, Role.KITCHEN]:
-            return Response(
-                {"detail": "You do not have permission to deactivate this role."},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        return super().deactivate(request, pk)
 
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def me(self, request):

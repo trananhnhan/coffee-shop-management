@@ -62,6 +62,7 @@ class InventoryItemViewSet(ActivatableViewSetMixin, viewsets.ModelViewSet):
         if user.role == Role.OWNER:
             qs = InventoryItem.objects.all()
             is_active_param = self.request.query_params.get('is_active')
+
             if is_active_param == 'true':
                 qs = qs.filter(is_active=True)
             elif is_active_param == 'false':
@@ -107,31 +108,36 @@ class StockRequestViewSet(viewsets.ModelViewSet):
     def approve(self, request, pk=None):
         req_obj = self.get_object()
 
-        if req_obj.status != StockRequestStatus.PENDING:
-            return Response({"detail": "Only pending requests can be approved."}, status=status.HTTP_400_BAD_REQUEST)
-
+        # Lấy giá trị unit_price_snapshot từ serializer nếu có truyền lên
         serializer = self.get_serializer(req_obj, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         final_price = serializer.validated_data.get('unit_price_snapshot', None)
 
-        req_obj.approve(approver_user=request.user, final_unit_price=final_price)
+        try:
+            req_obj.approve(approver_user=request.user, final_unit_price=final_price)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
         return Response(serializers.RetrieveStockRequestSerializer(req_obj).data)
 
     @action(detail=True, methods=['patch'])
     def reject(self, request, pk=None):
         req_obj = self.get_object()
-        if req_obj.status != StockRequestStatus.PENDING:
-            return Response({"detail": "Only pending requests can be rejected."}, status=status.HTTP_400_BAD_REQUEST)
 
-        req_obj.reject(rejector_user=request.user)
+        try:
+            req_obj.reject(rejector_user=request.user)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
         return Response(serializers.RetrieveStockRequestSerializer(req_obj).data)
 
     @action(detail=True, methods=['patch'])
     def deliver(self, request, pk=None):
         req_obj = self.get_object()
 
-        if req_obj.status != StockRequestStatus.APPROVED:
-            return Response({"detail": "Only approved requests can be delivered."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            req_obj.deliver()
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        req_obj.deliver()
         return Response(serializers.RetrieveStockRequestSerializer(req_obj).data)

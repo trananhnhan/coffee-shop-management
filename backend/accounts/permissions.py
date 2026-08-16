@@ -52,3 +52,20 @@ class IsStoreManagerOrCashier(permissions.BasePermission):
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated: return False
         return request.user.role in [Role.STORE_MANAGER, Role.CASHIER]
+
+
+class CanManageTargetUser(permissions.BasePermission):
+    """
+        Store Manager chỉ được tác động (sửa/khóa) lên Cashier và Kitchen.
+    """
+
+    def has_object_permission(self, request, view, obj):
+        # Owner có toàn quyền
+        if request.user.role == Role.OWNER:
+            return True
+
+        # Store Manager chỉ được đụng vào nhân viên cấp dưới
+        if request.user.role == Role.STORE_MANAGER:
+            return obj.role in [Role.CASHIER, Role.KITCHEN]
+
+        return False

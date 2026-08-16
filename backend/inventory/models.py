@@ -95,10 +95,13 @@ class StockRequest(TimeStampedModel):
                                     blank=True)
     approved_at = models.DateTimeField(null=True, blank=True)
 
-    def approve(self, approver_user):
+    def approve(self, approver_user, final_unit_price=None):
         """
         Quản lý duyệt đơn: Đổi trạng thái và đồng bộ giá mới nhất vào bảng StockItem (nếu có thay đổi)
         """
+        if self.status != StockRequestStatus.PENDING:
+            raise ValueError("Only pending requests can be approved.")
+
         with transaction.atomic():
             self.status = StockRequestStatus.APPROVED
             self.approved_by = approver_user
@@ -106,14 +109,17 @@ class StockRequest(TimeStampedModel):
             self.save(update_fields=['status', 'approved_by', 'approved_at', 'updated_at'])
 
             stock_item = self.inventory_item.stock_item
-            if self.unit_price_snapshot is not None and stock_item.unit_price != self.unit_price_snapshot:
-                stock_item.unit_price = self.unit_price_snapshot
+            if final_unit_price is not None and stock_item.unit_price != final_unit_price:
+                stock_item.unit_price = final_unit_price
                 stock_item.save(update_fields=['unit_price', 'updated_at'])
 
     def deliver(self):
         """
         Hàng về tới quán: Chuyển trạng thái và cộng dồn số lượng kho thực tế
         """
+        if self.status != StockRequestStatus.APPROVED:
+            raise ValueError("Only approved requests can be delivered.")
+
         with transaction.atomic():
             self.status = StockRequestStatus.DELIVERED
             self.save(update_fields=['status', 'updated_at'])
@@ -125,6 +131,9 @@ class StockRequest(TimeStampedModel):
         """
         Từ chối đơn lúc Pending: Chỉ đổi trạng thái, không đụng tới kho hay giá
         """
+        if self.status != StockRequestStatus.PENDING:
+            raise ValueError("Only pending requests can be rejected.")
+
         self.status = StockRequestStatus.REJECTED
         self.approved_by = rejector_user
         self.approved_at = timezone.now()

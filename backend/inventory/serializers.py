@@ -3,9 +3,9 @@ from accounts.models import Role
 from .models import StockItem, InventoryItem, StockRequest, StockRequestStatus
 
 
-# ==========================================
-# STOCK ITEM
-# ==========================================
+
+# --------STOCK ITEM---------
+
 class ListStockItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = StockItem
@@ -26,9 +26,9 @@ class CreateStockItemSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'unit', 'unit_price']
 
 
-# ==========================================
-# INVENTORY ITEM
-# ==========================================
+
+#   ------------INVENTORY ITEM-------------
+
 class ListInventoryItemSerializer(serializers.ModelSerializer):
     stock_item_name = serializers.CharField(source='stock_item.name', read_only=True)
     unit = serializers.CharField(source='stock_item.unit', read_only=True)
@@ -60,9 +60,9 @@ class PartialUpdateInventoryItemSerializer(serializers.ModelSerializer):
         fields = ['quantity']
 
 
-# ==========================================
-# STOCK REQUEST
-# ==========================================
+
+#   ----------STOCK REQUEST-------------
+
 class ListStockRequestSerializer(serializers.ModelSerializer):
     stock_item_name = serializers.CharField(source='inventory_item.stock_item.name', read_only=True)
 
@@ -108,7 +108,6 @@ class CreateStockRequestSerializer(serializers.ModelSerializer):
 
 
 class ApproveStockRequestSerializer(serializers.ModelSerializer):
-    """Serializer dùng riêng cho API duyệt đơn, chỉ cho phép truyền unit_price_snapshot mới nếu cần chốt giá"""
 
     class Meta:
         model = StockRequest

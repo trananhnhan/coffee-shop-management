@@ -6,9 +6,8 @@ from .models import Order, OrderItem, OrderStatus, OrderType, PaymentStatus, Kit
 from menu.models import Dish
 
 
-# ==========================================
-# ORDER ITEM SERIALIZERS
-# ==========================================
+
+# ----------ORDER ITEM--------
 
 class OrderItemSerializer(serializers.ModelSerializer):
     dish_name = serializers.CharField(source='dish.name', read_only=True)
@@ -29,9 +28,9 @@ class OrderItemCreateInputSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True, max_length=500)
 
 
-# ==========================================
-# ORDER SERIALIZERS
-# ==========================================
+
+# ---------ORDER---------
+
 
 class ListOrderSerializer(serializers.ModelSerializer):
     class Meta:

@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import models, transaction
 from django.core.validators import MinValueValidator
 from django.db.models import Q, CheckConstraint
 from decimal import Decimal
@@ -70,7 +70,35 @@ class Order(TimeStampedModel):
             )
         ]
 
+    def mark_paid(self):
+        if self.status != OrderStatus.READY:
+            raise ValueError("Order must be READY to be marked as paid.")
 
+        self.payment_status = PaymentStatus.PAID
+        self.status = OrderStatus.COMPLETED
+        self.save(update_fields=['payment_status', 'status', 'updated_at'])
+
+    def cancel(self):
+        if self.status == OrderStatus.COMPLETED:
+            raise ValueError("Cannot cancel a completed order.")
+
+        self.status = OrderStatus.CANCELLED
+        self.save(update_fields=['status', 'updated_at'])
+
+    def recalculate_status(self):
+        """Tự động tính lại trạng thái đơn hàng dựa trên các món ăn"""
+        items_statuses = self.items.values_list('kitchen_status', flat=True)
+
+        if all(s == KitchenStatus.PENDING for s in items_statuses):
+            new_status = OrderStatus.PENDING
+        elif all(s == KitchenStatus.DONE for s in items_statuses):
+            new_status = OrderStatus.READY
+        else:
+            new_status = OrderStatus.IN_KITCHEN
+
+        if self.status != new_status:
+            self.status = new_status
+            self.save(update_fields=['status', 'updated_at'])
     def __str__(self):
         return f"Order {self.id} - {self.branch.name} ({self.status})"
 
@@ -88,6 +116,19 @@ class OrderItem(TimeStampedModel):
     note = models.TextField(null=True, blank=True)
     kitchen_status = models.CharField(max_length=20, choices=KitchenStatus.choices, default=KitchenStatus.PENDING)
 
+    def update_kitchen_status(self, new_status):
+        if self.order.status in [OrderStatus.CANCELLED, OrderStatus.COMPLETED]:
+            raise ValueError(f"Cannot update items in a {self.order.status} order.")
+
+        if self.kitchen_status == KitchenStatus.DONE and new_status != KitchenStatus.DONE:
+            raise ValueError("Cannot revert status from DONE.")
+
+        with transaction.atomic():
+            self.kitchen_status = new_status
+            self.save(update_fields=['kitchen_status', 'updated_at'])
+
+            # Yêu cầu đơn hàng cha tự tính toán lại trạng thái của nó
+            self.order.recalculate_status()
 
     def __str__(self):
         return f"{self.quantity}x {self.dish.name} - Order {self.order.id}"

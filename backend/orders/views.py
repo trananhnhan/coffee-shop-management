@@ -38,25 +38,20 @@ class OrderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['patch'], url_path='mark-paid')
     def mark_paid(self, request, pk=None):
         order = self.get_object()
-
-        if order.status != OrderStatus.READY:
-            return Response({"detail": "Order must be READY to be marked as paid."}, status=status.HTTP_400_BAD_REQUEST)
-
-        order.payment_status = PaymentStatus.PAID
-        order.status = OrderStatus.COMPLETED
-        order.save(update_fields=['payment_status', 'status', 'updated_at'])
+        try:
+            order.mark_paid()
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(serializers.RetrieveOrderSerializer(order).data)
 
     @action(detail=True, methods=['patch'], url_path='cancel')
     def cancel(self, request, pk=None):
         order = self.get_object()
-
-        if order.status == OrderStatus.COMPLETED:
-            return Response({"detail": "Cannot cancel a completed order."}, status=status.HTTP_400_BAD_REQUEST)
-
-        order.status = OrderStatus.CANCELLED
-        order.save(update_fields=['status', 'updated_at'])
+        try:
+            order.cancel()
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(serializers.RetrieveOrderSerializer(order).data)
 
@@ -64,11 +59,6 @@ class OrderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['patch'], url_path=r'items/(?P<item_id>[^/.]+)/kitchen-status')
     def update_kitchen_status(self, request, pk=None, item_id=None):
         order = self.get_object()
-
-        # Ngăn chặn bếp update khi đơn đã bị hủy hoặc hoàn thành
-        if order.status in [OrderStatus.CANCELLED, OrderStatus.COMPLETED]:
-            return Response({"detail": f"Cannot update items in a {order.status} order."},
-                            status=status.HTTP_400_BAD_REQUEST)
 
         try:
             item = order.items.get(id=item_id)
@@ -79,28 +69,12 @@ class OrderViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         new_status = serializer.validated_data['kitchen_status']
 
-        # Chặn đi lùi trạng thái (ví dụ Done lùi về Cooking)
-        if item.kitchen_status == KitchenStatus.DONE and new_status != KitchenStatus.DONE:
-            return Response({"detail": "Cannot revert status from DONE."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            # Giao phó toàn bộ logic nặng nhọc cho Model xử lý
+            item.update_kitchen_status(new_status)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        with transaction.atomic():
-            # Cập nhật status của Item
-            item.kitchen_status = new_status
-            item.save(update_fields=['kitchen_status', 'updated_at'])
-
-            # Đọc lại toàn bộ Item để đánh giá Status của Order cha
-            items_statuses = order.items.values_list('kitchen_status', flat=True)
-
-            if all(s == KitchenStatus.PENDING for s in items_statuses):
-                new_order_status = OrderStatus.PENDING
-            elif all(s == KitchenStatus.DONE for s in items_statuses):
-                new_order_status = OrderStatus.READY
-            else:
-                new_order_status = OrderStatus.IN_KITCHEN
-
-            # Chỉ save Order nếu có sự thay đổi
-            if order.status != new_order_status:
-                order.status = new_order_status
-                order.save(update_fields=['status', 'updated_at'])
-
+        # Lấy lại order từ DB để có trạng thái mới nhất sau khi Model xử lý
+        order.refresh_from_db()
         return Response(serializers.RetrieveOrderSerializer(order).data)
