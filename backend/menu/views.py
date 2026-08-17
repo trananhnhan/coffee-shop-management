@@ -37,7 +37,7 @@ class BaseMenuViewSet(ActivatableViewSetMixin, viewsets.ModelViewSet):
             return qs
 
         # Các Role khác (Manager, Cashier, Kitchen) CHỈ THẤY món đang hoạt động
-        return qs.filter(is_active=True)
+        return qs.filter(is_active=True).order_by('-created_at')
 
 
 class CategoryViewSet(BaseMenuViewSet):
@@ -58,6 +58,13 @@ class IngredientViewSet(ActivatableViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [IsOwner]
     http_method_names = ['get', 'post', 'patch']
 
+    def get_permissions(self):
+        # Mở cửa cho nhân viên được xem danh sách nguyên liệu
+        if self.action in ['list', 'retrieve']:
+            return [IsAuthenticated()]
+        # Tạo, sửa, khóa (create, partial_update, activate, deactivate) vẫn chỉ mình Owner
+        return [IsOwner()]
+
     def get_queryset(self):
         qs = super().get_queryset()
         # View này chỉ Owner vào được, nên chỉ cần check param
@@ -66,7 +73,7 @@ class IngredientViewSet(ActivatableViewSetMixin, viewsets.ModelViewSet):
             qs = qs.filter(is_active=True)
         elif is_active_param == 'false':
             qs = qs.filter(is_active=False)
-        return qs
+        return qs.order_by('-created_at')
 
     def get_serializer_class(self):
         if self.action == 'list': return serializers.ListIngredientSerializer
@@ -80,6 +87,13 @@ class DishViewSet(BaseMenuViewSet):
     queryset = Dish.objects.all()
     http_method_names = ['get', 'post', 'patch']
 
+    def get_permissions(self):
+        if self.action == 'recipe_items' and self.request.method == 'GET':
+            from rest_framework.permissions import IsAuthenticated
+            return [IsAuthenticated()]
+
+        return super().get_permissions()
+
     def get_serializer_class(self):
         if self.action == 'list': return serializers.ListDishSerializer
         if self.action == 'retrieve': return serializers.RetrieveDishSerializer
@@ -92,6 +106,18 @@ class DishViewSet(BaseMenuViewSet):
             return serializers.ListRecipeItemSerializer
 
         return serializers.RetrieveDishSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        dishes = serializer.save()
+
+
+        output_serializer = serializers.RetrieveDishSerializer(
+            dishes, many=True, context={'request': request}
+        )
+        return Response(output_serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['patch'], url_path='toggle-availability')
     def toggle_availability(self, request, pk=None):
@@ -122,7 +148,7 @@ class DishViewSet(BaseMenuViewSet):
 class RecipeItemViewSet(ActivatableViewSetMixin, viewsets.ModelViewSet):
     queryset = RecipeItem.objects.all()
     permission_classes = [IsOwner]
-    http_method_names = ['patch', 'delete']
+    http_method_names = ['get', 'post', 'patch']
 
     def get_serializer_class(self):
         return serializers.PartialUpdateRecipeItemSerializer

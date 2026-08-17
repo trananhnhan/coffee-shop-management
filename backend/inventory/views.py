@@ -42,6 +42,7 @@ class StockItemViewSet(ActivatableViewSetMixin, viewsets.ModelViewSet):
         if self.action == 'list': return serializers.ListStockItemSerializer
         if self.action == 'retrieve': return serializers.RetrieveStockItemSerializer
         if self.action == 'create': return serializers.CreateStockItemSerializer
+        if self.action == 'partial_update': return serializers.PartialUpdateStockItemSerializer
         return serializers.RetrieveStockItemSerializer
 
 

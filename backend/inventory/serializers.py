@@ -25,7 +25,11 @@ class CreateStockItemSerializer(serializers.ModelSerializer):
         model = StockItem
         fields = ['id', 'name', 'unit', 'unit_price']
 
-
+class PartialUpdateStockItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StockItem
+        fields = ['name', 'unit', 'unit_price']
+        # Không cho phép sửa id hay các trường hệ thống
 
 #   ------------INVENTORY ITEM-------------
 

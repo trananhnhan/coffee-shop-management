@@ -1,67 +1,117 @@
 ---
 domain: inventory
 covers: [StockItem, InventoryItem, StockRequest]
+depends_on: [accounts.models.Role, accounts.permissions]
 status: draft
 ---
 
 # Test Plan: Inventory Domain
 
-## Part 1 — Unit-level tests (Model / Serializer / View, tested separately)
-
-Test each layer in isolation — no real HTTP calls (except View, which can be tested directly via `get_permissions`/queryset or a minimal APIClient call, whichever style you prefer).
-
-| Target | Model/File | Case | Input | Expected | Note |
-|---|---|---|---|---|---|
-| model | StockItem | unique name | create 2 records with same name | error (IntegrityError) | |
-| model | StockItem | auto lowercase | name = "Cà Phê" | saved as "cà phê" | |
-| model | StockItem | unit outside choices | unit = "invalid" | error on full_clean() | |
-| model | StockItem | negative unit_price | unit_price = -1 | error (MinValueValidator) | |
-| model | StockItem | null unit_price | unit_price not provided | OK, saved as null | |
-| model | InventoryItem | unique_together | duplicate (branch, stock_item) | error | |
-| model | InventoryItem | negative quantity | quantity = -1 | error | |
-| model | InventoryItem | is_low_stock boundary | quantity == threshold | True | uses `<=`, not `<` |
-| model | InventoryItem | is_low_stock | quantity > threshold | False | |
-| model | InventoryItem | FK PROTECT | delete StockItem still referenced | raise ProtectedError | |
-| model | StockRequest | quantity = 0 | quantity = 0 | error (Min 0.001) | |
-| model | StockRequest | status default | create without status | status = PENDING | |
-| model | StockRequest.approve() | PENDING → APPROVED | call approve() | status changes, approved_by/at set | |
-| model | StockRequest.approve() | not PENDING | call approve() again | raise ValueError | |
-| model | StockRequest.approve() | final_price differs from old price | pass new final_unit_price | StockItem.unit_price updated | |
-| model | StockRequest.deliver() | APPROVED → DELIVERED | call deliver() | InventoryItem.quantity correctly incremented | |
-| model | StockRequest.deliver() | called twice | deliver() x2 | 2nd call raises ValueError, quantity not double-counted | |
-| model | StockRequest.reject() | PENDING → REJECTED | call reject() | status changes, quantity/price UNCHANGED | |
-| serializer | CreateStockItemSerializer | missing unit | unit not provided | 400 | |
-| serializer | ListInventoryItemSerializer | nested source | stock_item_name, unit | correctly pulled from related stock_item | |
-| serializer | PartialUpdateInventoryItemSerializer | field outside quantity | payload includes threshold/branch | silently ignored, no error, no update | risky if the wrong serializer gets reused elsewhere |
-| serializer | CreateStockRequestSerializer | happy path | inventory_item same branch as user | created successfully | |
-| serializer | CreateStockRequestSerializer | cross-branch | inventory_item belongs to a different branch | ValidationError `{"detail":...}` | **security-critical** |
-| serializer | CreateStockRequestSerializer | price snapshot | create request, then change base price | old snapshot stays unchanged | |
-| serializer | ApproveStockRequestSerializer | passing unit_price_snapshot | value flows into approve(final_unit_price=) | verify it doesn't bypass the model method | |
-| view | StockItemViewSet | create permission | role != owner | 403 | |
-| view | StockItemViewSet | is_active filter | owner passes is_active=false | queryset filtered correctly | |
-| view | InventoryItemViewSet | partial_update permission | role != StoreManager/Kitchen | 403 | |
-| view | InventoryItemViewSet | branch isolation | non-owner list | only sees items from own branch | |
-| view | StockRequestViewSet | create permission | role != BranchStaff | 403 | |
-| view | StockRequestViewSet | approve/reject permission | role != StoreManager | 403 | |
-| view | StockRequestViewSet | deliver permission | StoreManager calls deliver | 403 | deliver is for BranchStaff, not Manager |
-| view | StockRequestViewSet | cross-branch object access | branch A retrieves an id from branch B | 404 (filtered out by queryset, not a 403) | |
+## Scope
+`StockItem`, `InventoryItem`, `StockRequest` — models, serializers, views (RBAC + actions).
 
 ---
 
-## Part 2 — Integration / Flow tests
+## Tầng 1 — Model constraints
 
-Goes through a real `APIClient` — request → response, across permission → serializer → view → model → DB.
-
-| Flow | Steps | Expected | Role per step | Note |
-|---|---|---|---|---|
-| Full lifecycle happy path | 1. Create request<br>2. Approve<br>3. Deliver | Status changes correctly at each step; InventoryItem.quantity ends up incremented by the right amount | Cashier → Manager → BranchStaff | main happy path |
-| Reject flow | 1. Create request<br>2. Reject | Status REJECTED; quantity/unit_price UNCHANGED | Cashier → Manager | |
-| Cross-branch blocked end-to-end | User in branch A tries to approve a request from branch B | Blocked at the correct step (404 via queryset filtering) | Manager (branch A) | verify it's blocked at the right layer |
-| Double approve via API | Approve the same request twice through the endpoint | 2nd call → 400 `{"detail": "..."}` | Manager | test via real APIClient, not by calling the model directly |
-| Price changes between create and approve | 1. Create request (snapshot price A)<br>2. Change StockItem price<br>3. Approve with a different final_price | StockItem.unit_price updates per approve; the request's original snapshot stays at price A | Cashier → (price change) → Manager | verify snapshot isn't retroactively overwritten |
+| Model | Field/Rule | Test case | Expected |
+|---|---|---|---|
+| StockItem | `name` | tạo 2 bản ghi trùng tên | lỗi (unique) |
+| StockItem | `name` | tạo "Cà Phê" | lưu thành "cà phê" (auto lowercase) |
+| StockItem | `unit` | giá trị ngoài `InventoryUnit.choices` | lỗi khi `full_clean()` |
+| StockItem | `unit_price` | null/blank | tạo không truyền giá vẫn OK |
+| StockItem | `unit_price` | giá trị âm | lỗi (MinValueValidator 0.00) |
+| InventoryItem | `(branch, stock_item)` | tạo trùng cặp | lỗi (unique_together) |
+| InventoryItem | `quantity` | âm | lỗi |
+| InventoryItem | `threshold` | âm | lỗi |
+| InventoryItem | `is_low_stock` | quantity == threshold | True |
+| InventoryItem | `is_low_stock` | quantity > threshold | False |
+| InventoryItem | `is_low_stock` | quantity < threshold | True |
+| InventoryItem | FK `stock_item` (PROTECT) | xóa StockItem đang được reference | raise `ProtectedError` |
+| StockRequest | `quantity` | = 0 | lỗi (MinValueValidator 0.001) |
+| StockRequest | `unit_price_snapshot` | âm | lỗi |
+| StockRequest | `status` | tạo mới không truyền | default = PENDING |
+| StockRequest | FK `requested_by`/`approved_by` (PROTECT) | xóa User đang được reference | lỗi |
+| StockRequest | `approved_by`/`approved_at` | tạo mới | mặc định None |
 
 ---
 
-## Known issues / things to watch for
-- `StockRequest.approved_by` is reused for both approve and reject — assert the right context, don't confuse "approver" with "rejector".
-- The `approve` action reads `final_price` via `serializer.validated_data.get('unit_price_snapshot', None)` — confirmed it correctly flows through the model's `approve()` method and doesn't bypass the state check.
+## Tầng 2 — Model business logic (state transitions)
+
+### `StockRequest.approve()`
+- [ ] PENDING → APPROVED: status đổi đúng, `approved_by`/`approved_at` được set
+- [ ] Not PENDING (APPROVED/REJECTED/DELIVERED) → gọi lại → raise `ValueError`
+- [ ] `final_unit_price` khác giá cũ → `StockItem.unit_price` được update
+- [ ] `final_unit_price=None` hoặc bằng giá cũ → `StockItem.unit_price` giữ nguyên
+
+### `StockRequest.deliver()`
+- [ ] APPROVED → DELIVERED: `InventoryItem.quantity` cộng dồn đúng số lượng request
+- [ ] Not APPROVED → raise `ValueError`
+- [ ] Gọi deliver() 2 lần liên tiếp → lần 2 lỗi, quantity không bị cộng đúp
+
+### `StockRequest.reject()`
+- [ ] PENDING → REJECTED: `approved_by` được set, quantity/unit_price KHÔNG đổi
+- [ ] Not PENDING → raise `ValueError`
+
+---
+
+## Tầng 3 — Serializer
+
+### StockItem
+- [ ] `ListStockItemSerializer`/`RetrieveStockItemSerializer`: toàn bộ field readonly
+- [ ] `CreateStockItemSerializer`: thiếu `unit` → 400
+- [ ] `CreateStockItemSerializer`: `unit` ngoài choices → 400
+- [ ] `PartialUpdateStockItemSerializer`: update `name`/`unit`/`unit_price` thành công, trả đúng giá trị mới
+- [ ] `PartialUpdateStockItemSerializer`: `unit` ngoài choices → 400
+- [ ] `PartialUpdateStockItemSerializer`: `unit_price` âm → 400
+- [ ] `PartialUpdateStockItemSerializer`: `id`/`created_at`/`updated_at` không nằm trong payload writable — gửi kèm cũng bị ignore
+
+### InventoryItem
+- [ ] `List`/`Retrieve`: `stock_item_name`, `unit` lấy đúng từ `stock_item` liên kết (nested source)
+- [ ] `is_low_stock` trả đúng giá trị theo data thực tế
+- [ ] `PartialUpdateInventoryItemSerializer`: chỉ `quantity` được update — gửi kèm `threshold`/`branch` trong payload phải bị ignore, không lỗi và không update
+
+### StockRequest — CreateStockRequestSerializer
+- [ ] Case chính: `inventory_item` thuộc branch user → tạo thành công
+- [ ] **[MUST-HAVE / bảo mật]** user branch A tạo request cho `inventory_item` thuộc branch B → `ValidationError` với `{"detail": "..."}`
+- [ ] `unit_price_snapshot` sau create() khớp đúng `stock_item.unit_price` tại thời điểm tạo (test snapshot: đổi giá gốc sau đó, snapshot cũ giữ nguyên)
+- [ ] `requested_by` tự động gán = user đang login, client truyền field khác trong payload bị ignore
+- [ ] `inventory_item` id không tồn tại → 400 (DRF PK field validation)
+
+### StockRequest — ApproveStockRequestSerializer
+- [ ] Truyền `unit_price_snapshot` mới → action `approve` truyền đúng vào `approve(final_unit_price=...)` (verify không bypass model method)
+
+---
+
+## Tầng 4 — View / Permission (RBAC)
+
+### StockItemViewSet
+- [ ] `create`/`activate`/`deactivate`: chỉ `IsOwner` — role khác → 403
+- [ ] `list`/`retrieve`/`partial_update`: `IsOwnerOrStoreManager` — role ngoài 2 role này → 403
+- [ ] `partial_update` thành công cho cả Owner lẫn Store Manager (đã fix — trước đây bị no-op do thiếu serializer)
+- [ ] Owner truyền `is_active=true/false` → filter đúng
+- [ ] Non-owner (Store Manager) không thấy item `is_active=False` dù cố truyền query param
+- [ ] `http_method_names` giới hạn ['get','post','patch'] — gọi DELETE → 405
+
+### InventoryItemViewSet
+- [ ] `list`/`retrieve`: mọi user đã login đều gọi được (IsAuthenticated), nhưng queryset tự lọc theo branch
+- [ ] `partial_update`: chỉ `IsStoreManagerOrKitchen` — role khác → 403
+- [ ] `activate`/`deactivate`: chỉ `IsOwner` → role khác 403
+- [ ] Non-owner chỉ thấy `InventoryItem` của branch mình + `is_active=True`
+- [ ] Owner thấy toàn bộ, filter `is_active` hoạt động đúng
+- [ ] User branch A gọi `retrieve` id thuộc branch B → 404 (do queryset đã lọc branch, không phải 403)
+
+### StockRequestViewSet
+- [ ] `create`: chỉ `IsBranchStaff` — role khác → 403
+- [ ] `approve`/`reject`: chỉ `IsStoreManager` — role khác (kể cả BranchStaff) → 403
+- [ ] `deliver`: chỉ `IsBranchStaff` — Store Manager gọi → 403 (xác nhận đúng phân quyền nhận hàng vs duyệt đơn)
+- [ ] Non-owner chỉ thấy StockRequest thuộc branch mình qua `list`
+- [ ] User branch A gọi `approve`/`reject`/`deliver` trên request id thuộc branch B → 404 (do get_queryset lọc branch trước get_object)
+- [ ] `approve` action: verify gọi đúng qua `req_obj.approve()`, không gán trực tiếp field → trạng thái PENDING mới approve được, state khác → 400 `{"detail": "..."}`
+- [ ] `reject`/`deliver` action tương tự: trả đúng 400 `{"detail": "..."}` khi sai state
+
+---
+
+## Known issues / cần lưu ý khi test
+- `StockRequest.approved_by` dùng chung cho cả action approve và reject (field naming dễ nhầm là "người duyệt" dù có thể là người từ chối) — không phải bug, nhưng test phải assert đúng ngữ cảnh, và cân nhắc note lại cho FE khi hiển thị.
+- Action `approve` lấy `final_price` qua `serializer.validated_data.get('unit_price_snapshot', None)` — nếu client không gửi gì thì mặc định None, đúng behavior "giữ giá cũ" của model method. Đã verify không bypass, an toàn.

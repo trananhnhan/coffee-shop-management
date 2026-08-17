@@ -1,7 +1,9 @@
+from django.db.models import Max
 from rest_framework import serializers
 from django.db import transaction
 from django.utils.timezone import now
 
+from accounts.models import Branch
 from .models import Order, OrderItem, OrderStatus, OrderType, PaymentStatus, KitchenStatus
 from menu.models import Dish
 
@@ -87,25 +89,33 @@ class CreateOrderSerializer(serializers.ModelSerializer):
         validated_data['status'] = OrderStatus.PENDING
         validated_data['payment_status'] = PaymentStatus.UNPAID
 
-        # Sinh queue_number cho Takeaway
-        if validated_data['order_type'] == OrderType.TAKEAWAY:
-            today = now().date()
-            count = Order.objects.filter(
-                branch=branch,
-                order_type=OrderType.TAKEAWAY,
-                created_at__date=today
-            ).count()
-            validated_data['queue_number'] = count + 1
-
+        # Đẩy TOÀN BỘ logic vào trong transaction
         with transaction.atomic():
-            # Tính tổng tiền từ snapshot của Dish
+            # 1. DB LOCK: Khóa record Branch này lại.
+            # Bất kỳ request nào khác muốn tạo đơn cho branch này đều phải đợi request này chạy xong (tránh Race Condition).
+            Branch.objects.select_for_update().get(id=branch.id)
+
+            # 2. Sinh queue_number cho Takeaway SAU KHI ĐÃ LOCK
+            if validated_data['order_type'] == OrderType.TAKEAWAY:
+                today = now().date()
+
+                # Dùng Max() thay vì count() để tránh lỗi trùng số nếu có đơn bị xóa
+                max_queue = Order.objects.filter(
+                    branch=branch,
+                    order_type=OrderType.TAKEAWAY,
+                    created_at__date=today
+                ).aggregate(max_num=Max('queue_number'))['max_num']
+
+                validated_data['queue_number'] = (max_queue or 0) + 1
+
+            # 3. Tính tổng tiền từ snapshot của Dish
             total_price = sum((item['dish'].price * item['quantity']) for item in items_data)
             validated_data['total_price_snapshot'] = total_price
 
-            # Tạo Order
+            # 4. Tạo Order
             order = Order.objects.create(**validated_data)
 
-            # Tạo OrderItems
+            # 5. Tạo OrderItems
             order_items = [
                 OrderItem(
                     order=order,
@@ -119,6 +129,13 @@ class CreateOrderSerializer(serializers.ModelSerializer):
 
         return order
 
+    def to_representation(self, instance):
+        """
+        Ghi đè dữ liệu trả về: Sau khi tạo đơn thành công,
+        dùng RetrieveOrderSerializer để trả về full tất cả thông tin
+        (bao gồm cả queue_number, items, trạng thái, v.v...)
+        """
+        return RetrieveOrderSerializer(instance, context=self.context).data
 
 class UpdateKitchenStatusSerializer(serializers.ModelSerializer):
     class Meta:

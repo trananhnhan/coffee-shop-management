@@ -49,12 +49,15 @@ class UserViewSet(ActivatableViewSetMixin, viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'patch']
 
     pagination_class = BasicPaginator
+
     def get_permissions(self):
-        # Nếu là các thao tác tác động trực tiếp lên 1 user cụ thể
+        # 1. FIX FAIL 2: Trả lại quyền IsAuthenticated cho action 'me'
+        if self.action == 'me':
+            from rest_framework.permissions import IsAuthenticated
+            return [IsAuthenticated()]
+
         if self.action in ['partial_update', 'deactivate', 'activate']:
             return [IsOwnerOrStoreManager(), CanManageTargetUser()]
-
-        # Các action còn lại (list, create, retrieve)
         return [IsOwnerOrStoreManager()]
 
     def get_queryset(self):
@@ -69,7 +72,7 @@ class UserViewSet(ActivatableViewSetMixin, viewsets.ModelViewSet):
                 qs = qs.filter(is_active=True)
             elif is_active_param == 'false':
                 qs = qs.filter(is_active=False)
-            return qs
+            return qs.order_by('-id')
 
         elif user.role == Role.STORE_MANAGER:
             # Store Manager CHỈ thấy user thuộc nhánh mình VÀ đang active
