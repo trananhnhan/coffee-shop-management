@@ -32,6 +32,7 @@ status: draft
 | serializer | PartialUpdateUserSerializer | Owner changes branch/role | any value | not restricted (validate() only checks StoreManager) | confirm Owner has no extra restriction here |
 | view | BranchViewSet | permission | role != Owner | 403 | |
 | view | BranchViewSet | is_active filter | ?is_active=false | queryset filtered correctly | |
+| view | BranchViewSet | activate/deactivate idempotency guard | activate an already-active branch, or deactivate an already-inactive one | 400 `{"detail": "... is already active/inactive."}` | via `BaseModel.activate()/deactivate()` raising ValueError |
 | view | BranchViewSet | http methods | DELETE request | 405 | |
 | view | UserViewSet | permission list/create/retrieve | role not Owner/StoreManager | 403 | |
 | view | UserViewSet | permission list/create/retrieve | Cashier/Kitchen calls list | 403, blocked by `IsOwnerOrStoreManager.has_permission()` before queryset even runs | confirms queryset's `.none()` branch is effectively dead code for these roles via this endpoint |
@@ -41,6 +42,7 @@ status: draft
 | view | UserViewSet | object permission partial_update | StoreManager targets **themselves** | 403 — `obj.role == STORE_MANAGER`, not in allowed list | StoreManager cannot self-update via this endpoint at all, not even their own password |
 | view | UserViewSet | object permission partial_update | Owner targets any user (including another Owner) | allowed (Owner bypasses object check) | |
 | view | UserViewSet | queryset Owner | Owner lists users | sees all, is_active filter works | |
+| view | UserViewSet | activate/deactivate idempotency guard | activate an already-active user, or deactivate an already-inactive one | 400 `{"detail": "... is already active/inactive."}` | applies after `CanManageTargetUser` passes — test with a valid target, not a permission-blocked one |
 | view | UserViewSet | queryset StoreManager | StoreManager lists users | only sees active users in own branch | |
 | view | UserViewSet.me | any authenticated user | GET /me | returns own user data | GET only — no PATCH, so `me` cannot be used to self-update password either |
 
