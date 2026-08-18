@@ -90,7 +90,12 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'core.wsgi.application'
 
-
+CHANNEL_LAYERS = {
+    "default": {
+        # Dùng RAM để làm trạm trung chuyển tin nhắn (Phù hợp cho Dev & Test)
+        "BACKEND": "channels.layers.InMemoryChannelLayer"
+    }
+}
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 

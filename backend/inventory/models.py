@@ -65,6 +65,41 @@ class InventoryItem(BaseModel):
     def is_low_stock(self):
         return self.quantity <= self.threshold
 
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        was_safe = True  # Mặc định lúc đầu cho là an toàn
+
+        # 1. Trích xuất trạng thái TRƯỚC KHI LƯU
+        if not is_new:
+            try:
+                old_instance = InventoryItem.objects.get(pk=self.pk)
+                # Nếu số lượng cũ LỚN HƠN ngưỡng (Tức là đang an toàn)
+                was_safe = not old_instance.is_low_stock
+            except InventoryItem.DoesNotExist:
+                pass
+
+        # 2. Gọi hàm lưu vào Database (Lúc này self.quantity là số lượng MỚI)
+        super().save(*args, **kwargs)
+
+        # 3. KIỂM TRA ĐIỀU KIỆN KÍCH HOẠT WEBSOCKET
+        # Chỉ báo động khi: Không phải tạo mới + Đã từng an toàn + Bây giờ rớt xuống ngưỡng
+        is_dangerous_now = self.is_low_stock
+
+        if not is_new and was_safe and is_dangerous_now:
+            # Import bên trong hàm để tránh lỗi vòng lặp (circular import)
+            from notifications.utils import broadcast_ws_event
+
+            transaction.on_commit(lambda: broadcast_ws_event(
+                branch_id=self.branch.id,
+                event_type="inventory.low_stock",
+                data={
+                    "item_id": str(self.id),
+                    "item_name": self.stock_item.name,
+                    "current_quantity": float(self.quantity),
+                    "threshold": float(self.threshold)
+                }
+            ))
+
     def __str__(self):
         return f"{self.stock_item.name} - {self.branch.name}"
 

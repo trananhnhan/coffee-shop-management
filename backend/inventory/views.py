@@ -1,3 +1,5 @@
+from django.db import transaction
+from django.db.models import F
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -7,6 +9,7 @@ from core.pagination import BasicPaginator
 from core.shared import ActivatableViewSetMixin
 from accounts.models import Role
 from accounts import permissions as acc_permissions
+from notifications.utils import broadcast_ws_event
 
 from .models import StockItem, InventoryItem, StockRequest, StockRequestStatus
 from . import serializers
@@ -78,6 +81,34 @@ class InventoryItemViewSet(ActivatableViewSetMixin, viewsets.ModelViewSet):
         if self.action == 'partial_update': return serializers.PartialUpdateInventoryItemSerializer
         return serializers.RetrieveInventoryItemSerializer
 
+    @action(detail=False, methods=['get'], url_path='low-stock')
+    def low_stock(self, request):
+        """
+        API dành cho Frontend gọi 1 lần khi vừa mở app (F5).
+        Trả về danh sách các nguyên liệu đang cạn kiệt của chi nhánh.
+        """
+        user = request.user
+
+        # Chỉ lấy hàng của chi nhánh user đang làm việc (hoặc tất cả nếu là Owner)
+        qs = self.get_queryset()
+
+        # Dùng F object của Django để so sánh 2 cột trong cùng 1 dòng DB cực nhanh
+        # Lọc ra những món có quantity <= threshold
+        low_stock_items = qs.filter(quantity__lte=F('threshold'))
+
+        # Phân trang hoặc Serialize trả về
+        page = self.paginate_queryset(low_stock_items)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(low_stock_items, many=True)
+
+        # Kèm thêm một cờ `has_low_stock` để FE dễ làm biểu tượng ❗️
+        return Response({
+            "has_low_stock": len(serializer.data) > 0,
+            "items": serializer.data
+        })
 
 class StockRequestViewSet(viewsets.ModelViewSet):
 
@@ -116,6 +147,18 @@ class StockRequestViewSet(viewsets.ModelViewSet):
 
         try:
             req_obj.approve(approver_user=request.user, final_unit_price=final_price)
+
+            # Đã sửa stock_request thành req_obj
+            transaction.on_commit(lambda: broadcast_ws_event(
+                branch_id=req_obj.inventory_item.branch.id,
+                event_type="inventory.request_approved",
+                data={
+                    "request_id": str(req_obj.id),
+                    "item_name": req_obj.inventory_item.stock_item.name,
+                    "status": req_obj.status,
+                    "approved_by": request.user.username
+                }
+            ))
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -127,6 +170,18 @@ class StockRequestViewSet(viewsets.ModelViewSet):
 
         try:
             req_obj.reject(rejector_user=request.user)
+
+            # Đã sửa stock_request thành req_obj
+            transaction.on_commit(lambda: broadcast_ws_event(
+                branch_id=req_obj.inventory_item.branch.id,
+                event_type="inventory.request_rejected",
+                data={
+                    "request_id": str(req_obj.id),
+                    "item_name": req_obj.inventory_item.stock_item.name,
+                    "status": req_obj.status,
+                    "rejected_by": request.user.username
+                }
+            ))
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -138,6 +193,17 @@ class StockRequestViewSet(viewsets.ModelViewSet):
 
         try:
             req_obj.deliver()
+
+            # Bổ sung thông báo Deliver để Bếp biết hàng đã về kho
+            transaction.on_commit(lambda: broadcast_ws_event(
+                branch_id=req_obj.inventory_item.branch.id,
+                event_type="inventory.request_delivered",
+                data={
+                    "request_id": str(req_obj.id),
+                    "item_name": req_obj.inventory_item.stock_item.name,
+                    "status": req_obj.status
+                }
+            ))
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 

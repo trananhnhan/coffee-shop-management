@@ -4,6 +4,7 @@ from django.db import transaction
 from django.utils.timezone import now
 
 from accounts.models import Branch
+from notifications.utils import broadcast_ws_event
 from .models import Order, OrderItem, OrderStatus, OrderType, PaymentStatus, KitchenStatus
 from menu.models import Dish
 
@@ -91,15 +92,12 @@ class CreateOrderSerializer(serializers.ModelSerializer):
 
         # Đẩy TOÀN BỘ logic vào trong transaction
         with transaction.atomic():
-            # 1. DB LOCK: Khóa record Branch này lại.
-            # Bất kỳ request nào khác muốn tạo đơn cho branch này đều phải đợi request này chạy xong (tránh Race Condition).
+            # 1. DB LOCK: Khóa record Branch này lại (Chống Race Condition)
             Branch.objects.select_for_update().get(id=branch.id)
 
             # 2. Sinh queue_number cho Takeaway SAU KHI ĐÃ LOCK
             if validated_data['order_type'] == OrderType.TAKEAWAY:
                 today = now().date()
-
-                # Dùng Max() thay vì count() để tránh lỗi trùng số nếu có đơn bị xóa
                 max_queue = Order.objects.filter(
                     branch=branch,
                     order_type=OrderType.TAKEAWAY,
@@ -112,7 +110,7 @@ class CreateOrderSerializer(serializers.ModelSerializer):
             total_price = sum((item['dish'].price * item['quantity']) for item in items_data)
             validated_data['total_price_snapshot'] = total_price
 
-            # 4. Tạo Order
+            # 4. TẠO ORDER (Làm thủ công hoàn toàn, KHÔNG dùng super().create nữa)
             order = Order.objects.create(**validated_data)
 
             # 5. Tạo OrderItems
@@ -121,12 +119,27 @@ class CreateOrderSerializer(serializers.ModelSerializer):
                     order=order,
                     dish=item['dish'],
                     quantity=item['quantity'],
-                    unit_price_snapshot=item['dish'].price,  # Đóng băng giá
+                    unit_price_snapshot=item['dish'].price,
                     note=item.get('note', '')
                 ) for item in items_data
             ]
             OrderItem.objects.bulk_create(order_items)
+            # 6. TRIGGER WEBSOCKET
+            # Bọc try-except để lỡ có lỗi lúc lấy data cũng không làm sập luồng tạo đơn
+            try:
+                full_order_data = self.to_representation(order)
 
+                # Gắn cò súng: Chỉ kích hoạt GỬI TIN NHẮN khi DB đã commit thành công
+                transaction.on_commit(lambda: broadcast_ws_event(
+                    branch_id=order.branch.id,
+                    event_type="order.created",
+                    data=full_order_data
+                ))
+            except Exception as e:
+                # Ghi log lỗi nếu cần, không ném lỗi ra ngoài làm sập quá trình tạo đơn
+                print(f"WebSocket Trigger Error: {e}")
+
+        # Trả về order nguyên vẹn (DRF sẽ tự gọi to_representation một lần nữa để trả về cho API)
         return order
 
     def to_representation(self, instance):

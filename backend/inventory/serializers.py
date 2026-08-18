@@ -1,5 +1,7 @@
+from django.db import transaction
 from rest_framework import serializers
 from accounts.models import Role
+from notifications.utils import broadcast_ws_event
 from .models import StockItem, InventoryItem, StockRequest, StockRequestStatus
 
 
@@ -108,7 +110,25 @@ class CreateStockRequestSerializer(serializers.ModelSerializer):
 
         # Tự động gán người yêu cầu
         validated_data['requested_by'] = self.context['request'].user
-        return super().create(validated_data)
+
+        # 1. Gọi hàm tạo của cha (Lưu vào DB)
+        stock_request = super().create(validated_data)
+
+        notification_data = {
+            "request_id": str(stock_request.id),
+            "item_name": inventory_item.stock_item.name,
+            "quantity": float(stock_request.quantity),
+            "requested_by": stock_request.requested_by.username,
+            "status": stock_request.status
+        }
+
+        transaction.on_commit(lambda: broadcast_ws_event(
+            branch_id=inventory_item.branch.id,
+            event_type="inventory.stock_request",
+            data=notification_data
+        ))
+
+        return stock_request
 
 
 class ApproveStockRequestSerializer(serializers.ModelSerializer):

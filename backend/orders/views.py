@@ -7,6 +7,7 @@ from django.db import transaction
 from core.pagination import BasicPaginator
 from accounts.models import Role
 from accounts import permissions as acc_permissions
+from notifications.utils import broadcast_ws_event
 
 from .models import Order, OrderItem, OrderStatus, PaymentStatus, KitchenStatus
 from . import serializers
@@ -77,4 +78,12 @@ class OrderViewSet(viewsets.ModelViewSet):
 
         # Lấy lại order từ DB để có trạng thái mới nhất sau khi Model xử lý
         order.refresh_from_db()
+        serializer = serializers.RetrieveOrderSerializer(order)
+
+        # GẮN TRIGGER WEBSOCKET
+        transaction.on_commit(lambda: broadcast_ws_event(
+            branch_id=order.branch.id,
+            event_type="order.updated",
+            data=serializer.data
+        ))
         return Response(serializers.RetrieveOrderSerializer(order).data)
