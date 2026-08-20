@@ -58,7 +58,8 @@ INSTALLED_APPS = [
     'accounts',
     'menu',
     'orders',
-    'inventory'
+    'inventory',
+    'reports'
 ]
 
 MIDDLEWARE = [
@@ -102,6 +103,13 @@ CHANNEL_LAYERS = {
 DATABASES = {
     # django-environ tự động parse chuỗi DATABASE_URL thành config dict
     'default': env.db('DATABASE_URL')
+}
+# CẤU HÌNH BỘ NHỚ ĐỆM (CACHE) DÙNG REDIS
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "unique-snowflake",
+    }
 }
 REST_FRAMEWORK = {
     # Authenticate thuần bằng JWT

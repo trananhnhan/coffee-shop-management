@@ -104,7 +104,7 @@ class InventoryItemViewSet(ActivatableViewSetMixin, viewsets.ModelViewSet):
 
         serializer = self.get_serializer(low_stock_items, many=True)
 
-        # Kèm thêm một cờ `has_low_stock` để FE dễ làm biểu tượng ❗️
+        # Kèm thêm một cờ `has_low_stock` để FE dễ làm biểu tượng ️
         return Response({
             "has_low_stock": len(serializer.data) > 0,
             "items": serializer.data
