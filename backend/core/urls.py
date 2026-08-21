@@ -6,8 +6,12 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
     SpectacularRedocView
 )
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenBlacklistView
 
 urlpatterns = [
+    path('api/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('api/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/logout/', TokenBlacklistView.as_view(), name='token_blacklist'),
     # Giao diện Admin mặc định của Django
     path('admin/', admin.site.urls),
 
@@ -16,7 +20,7 @@ urlpatterns = [
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
 
     # Nối router của các app vào nhánh /api/
-    path('api/accounts/', include('accounts.urls')),
+    path('api/', include('accounts.urls')),
     path('api/menu/', include('menu.urls')),
     path('api/inventory/', include('inventory.urls')),
     path('api/orders/', include('orders.urls')),
